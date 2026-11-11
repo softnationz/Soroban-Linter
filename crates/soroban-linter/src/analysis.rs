@@ -623,6 +623,8 @@ pub struct FnFacts {
     pub other_auth: bool,
     /// Forwards authorization to other accounts (`custom_account().delegate_auth(..)`).
     pub delegates_auth: bool,
+    /// Aborts opaquely with `panic!`, `unreachable!`, or a non-storage unwrap/expect.
+    pub opaque_abort: bool,
     /// Calls to crate-local functions, with argument details.
     pub call_sites: Vec<CallSite>,
     /// Locations of `storage.get(..).unwrap()` / `.expect(..)`.
@@ -724,7 +726,11 @@ impl<'ast> Visit<'ast> for Scanner {
                     if inner.method == "get" && storage_call(inner, &self.facts.bindings).is_some()
                     {
                         self.facts.unwrapped_gets.push(line_col(m.method.span()));
+                    } else {
+                        self.facts.opaque_abort = true;
                     }
+                } else {
+                    self.facts.opaque_abort = true;
                 }
             }
             _ => {}
@@ -733,6 +739,20 @@ impl<'ast> Visit<'ast> for Scanner {
             self.facts.storage_calls.push(call);
         }
         visit::visit_expr_method_call(self, m);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast Macro) {
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| matches!(s.ident.to_string().as_str(), "panic" | "unreachable"))
+        {
+            self.facts.opaque_abort = true;
+        }
+        for expr in macro_exprs(mac) {
+            Visit::visit_expr(self, &expr);
+        }
     }
 
     fn visit_expr_call(&mut self, c: &'ast ExprCall) {
@@ -769,12 +789,6 @@ impl<'ast> Visit<'ast> for Scanner {
             self.facts.callees.push(name);
         }
         visit::visit_expr_call(self, c);
-    }
-
-    fn visit_macro(&mut self, mac: &'ast Macro) {
-        for e in macro_exprs(mac) {
-            Visit::visit_expr(self, &e);
-        }
     }
 }
 
@@ -833,6 +847,7 @@ pub struct Effects {
     pub publishes_event: bool,
     pub verifies_signature: bool,
     pub delegates_auth: bool,
+    pub opaque_abort: bool,
     /// Writes a key such as `DataKey::Admin` / `Owner`.
     pub writes_authority_key: bool,
     /// Reads a key such as `DataKey::Admin` / `Owner`.
@@ -862,6 +877,7 @@ impl Effects {
             publishes_event: f.publishes_event,
             verifies_signature: f.verifies_signature,
             delegates_auth: f.delegates_auth,
+            opaque_abort: f.opaque_abort,
             writes_authority_key: f
                 .storage_calls
                 .iter()
@@ -893,6 +909,7 @@ impl Effects {
         self.publishes_event |= o.publishes_event;
         self.verifies_signature |= o.verifies_signature;
         self.delegates_auth |= o.delegates_auth;
+        self.opaque_abort |= o.opaque_abort;
         self.writes_authority_key |= o.writes_authority_key;
         self.reads_authority_key |= o.reads_authority_key;
         self.uses_allowance |= o.uses_allowance;
