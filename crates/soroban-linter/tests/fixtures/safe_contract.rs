@@ -3,9 +3,9 @@
 #![no_std]
 use soroban_sdk::{
     auth::{Context, CustomAccountInterface},
-    contract, contracterror, contractimpl, contracttype, panic_with_error,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error,
     crypto::Hash,
-    Address, BytesN, Env, Vec,
+    symbol_short, Address, BytesN, Env, Symbol, Vec,
 };
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -27,6 +27,7 @@ pub enum Error {
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
+    Owner,
     Balance(Address),
     Allowance(Address, Address),
 }
@@ -74,6 +75,11 @@ pub struct Token;
 impl Token {
     pub fn __constructor(e: Env, admin: Address) {
         e.storage().instance().set(&DataKey::Admin, &admin);
+        AuthorityChanged {
+            key: symbol_short!("admin"),
+            value: admin,
+        }
+        .publish(&e);
     }
 
     pub fn mint(e: Env, to: Address, amount: i128) {
@@ -122,6 +128,17 @@ impl Token {
         }
         caller.require_auth();
         e.storage().instance().set(&DataKey::Admin, &new_admin);
+        e.events()
+            .publish((symbol_short!("admin"),), new_admin);
+    }
+
+    pub fn set_owner(e: Env, caller: Address, owner: Address) {
+        if caller != read_admin(&e) {
+            panic!("not admin");
+        }
+        caller.require_auth();
+        e.storage().instance().set(&DataKey::Owner, &owner);
+        publish_owner_changed(&e, &owner);
     }
 
     /// Amount validated inside a helper it is forwarded to.
@@ -155,6 +172,8 @@ impl Token {
     }
 
     pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) {
+        e.events()
+            .publish((symbol_short!("upgrade"),), new_wasm_hash.clone());
         read_admin(&e).require_auth();
         e.deployer().update_current_contract_wasm(new_wasm_hash);
     }

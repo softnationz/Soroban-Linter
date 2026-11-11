@@ -11,6 +11,7 @@ use crate::manifest::ManifestSet;
 use crate::LintConfig;
 
 mod critical_state_in_temporary;
+mod missing_admin_event;
 mod missing_require_auth;
 mod missing_ttl_extension;
 mod overflow_checks;
